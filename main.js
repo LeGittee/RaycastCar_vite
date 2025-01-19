@@ -448,7 +448,7 @@ function runRapier() {
                 if(event.key === "ArrowDown") {
                     GoingBackward = false;
                 }
-                if(event.key === "r") {
+                if(event.key === "f") {
                     Flipping = false;
                 }
                 if(event.key === " ") {
