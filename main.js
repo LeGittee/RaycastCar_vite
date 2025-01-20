@@ -23,8 +23,8 @@ let chassisWidth= "temporary, the actual value is set in loading of chassis mode
 let wheelBase= "temporary, the actual value is set in loading of chassis model";
 let hoverDist= 2.1;
 let wheelRadius= "not used";
-let strength= 2.8;
-let damping= 0.45;
+let strength= 3.7;
+let damping= 0.2;
 let chassisMass= 1;
 let maxSpeed= 500;
 let maxTurnSpeed= 50;
@@ -61,8 +61,9 @@ function init() {
     document.body.appendChild(gameDiv)
 
 
-    // scene b
+    // scene
     scene = new THREE.Scene();
+    scene.background = new THREE.Color( 0x00baff );
     scene.fog = new THREE.Fog( 0x000000, 500, 10000 );
 
     // camera
@@ -156,31 +157,14 @@ function init() {
     //ground model
     loader.load( '../assets/ground.glb', function ( gltf ) {
 
-        let groundGeo= gltf.scene
-        // Merge geometries from model meshes (code copied from doppl3r KCC example - Trimesh Class)
-        var geometry;
-        var geometries = [];
-        groundGeo.traverse(function(child) {
-          if (child.isMesh) {
-            // Translate geometry from mesh origin
-            geometry = child.geometry;
-            geometry.rotateX(child.rotation.x);
-            geometry.rotateY(child.rotation.y);
-            geometry.rotateZ(child.rotation.z);
-            geometry.scale(child.scale.x, child.scale.y, child.scale.z);
-            geometry.translate(child.position.x, child.position.y, child.position.z);
-            // Push geometry to array for merge
-            geometries.push(geometry);
-          }
-        });
-        geometry = mergeGeometries(geometries);
-        
-        groundRawPoints = geometry.attributes.position.array
-        groundIndices = new Uint32Array(geometry.getIndex().array)
-        groundGeo.castShadow = true;
-        groundGeo.receiveShadow = true;
+        let groundMesh= gltf.scene
+        let groundGeo= makeMergedGeo(groundMesh)
+        groundRawPoints = groundGeo.attributes.position.array
+        groundIndices = new Uint32Array(groundGeo.getIndex().array)
+        groundMesh.castShadow = true;
+        groundMesh.receiveShadow = true;
         //groundGeo.material= new THREE.MeshStandardMaterial()
-        scene.add( groundGeo );
+        scene.add( groundMesh );
 
         }, undefined, function ( error ) {
     
@@ -188,6 +172,23 @@ function init() {
     
         }
     ); 
+    
+    //rocks models
+    loader.load( '../assets/rocks.glb', function ( gltf ) {
+        scene.add(gltf.scene)  
+        console.log("child in rocks scene")     
+        gltf.scene.traverse(function(child) {
+            if (child.isMesh){
+                console.log(child.name, child)
+            }
+        })
+
+
+    }, undefined, function ( error ) {
+
+        console.error( error );
+
+    } );
 
 
     //rendering stuff
