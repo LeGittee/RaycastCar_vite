@@ -2,21 +2,20 @@ import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
-import { Ticker } from './Ticker.js';
 import RAPIER from '@dimforge/rapier3d';
 
 var dt = 1 / 60;
+var camera, scene, renderer
 
-var constraintDown = false;
-var camera, scene, renderer, gplane=false, clickMarker=false;
-var geometry, material, mesh;
-var controls,time = Date.now();
+let cubeSizeX= 3, cubeSizeY= 3, cubeSizeZ= 3;
 
-var jointBody, constrainedBody, mouseConstraint;
-
-let cubeSizeX= 3;
-let cubeSizeY= 0.8;
-let cubeSizeZ= 1.8;
+// To be synced
+var meshes=[], bodies=[];
+var controls;
+var groundRawPoints, groundIndices, chassisRawPoints, chassisBBoxSize;
+var wheelList=[];
+let wheelPathList= ['../assets/wheel.glb'];
+let wheelRadiusList= [];
 
 // parameters of the car
 let chassisWidth= "temporary, the actual value is set in loading of chassis model";
@@ -31,30 +30,23 @@ let maxTurnSpeed= 50;
 let accGain= 0.06;
 let decGain= 0.05;
 let brakeGain= 0.4;
-let turnGain= 8;
+let turnGain= 26;
 let maxWheelTurn= Math.PI*0.25;
 let grip= 3;
 let drag= 0.1;
 let wheelSpincoeff= 1;
 
+//loading manager to run rapier only when models are loaded
 const ldManager = new THREE.LoadingManager()
 const loader = new GLTFLoader(ldManager);
+
 ldManager.onLoad = function() { console.log( 'Loading complete!'); runRapier() }
 
-// To be synced
-var meshes=[], bodies=[];
-var heartRawPoints, groundRawPoints, groundIndices, chassisRawPoints, chassisBBoxSize;
-var globalScale= 0.05;
-let wheelA, wheelB, wheelC, wheelD;
-let wheelList=[wheelA, wheelB, wheelC, wheelD];
-let wheelPathList= ['../assets/wheel.glb'];
-let wheelRadiusList= [];
 
-
-init();
+initThree();
 animate();
 
-function init() {
+function initThree() {
     //create a div to show the 3d scene and insert it between top and bottom bar
     let gameDiv = document.createElement('div');
     gameDiv.classList.add('game');
@@ -114,7 +106,7 @@ function init() {
     }*/
 
     //import the wheel models
-    for (let k=0; k!==4; k++){
+    for (let k=0; k<4; k++){
         loader.load( wheelPathList[0], function ( gltf ) {
             wheelList[k]= gltf.scene;
             wheelList[k].castShadow= true;
@@ -163,7 +155,6 @@ function init() {
         groundIndices = new Uint32Array(groundGeo.getIndex().array)
         groundMesh.castShadow = true;
         groundMesh.receiveShadow = true;
-        //groundGeo.material= new THREE.MeshStandardMaterial()
         scene.add( groundMesh );
 
         }, undefined, function ( error ) {
@@ -248,16 +239,16 @@ function onWindowResize() {
 }
 
 function animate() {
-    requestAnimationFrame( animate );
-    render();
+
     //updates the target of the camera
     controls.update()
-}
-
-
-function render() {
+    //renders the Three js scene to the canvas
     renderer.render(scene, camera);
+    //asks the browser to update the canvas ?
+    requestAnimationFrame( animate );
 }
+
+
 
 //two functions (copied from chatGPT) used to get my directional vector3 using the orientation quaternion
 function multiplyQuaternions(q, r) {
@@ -336,7 +327,6 @@ function dotProduct(vector1, vector2) {
            vector1.z * vector2.z;
 }
 function runRapier() {
-
     import('@dimforge/rapier3d').then(RAPIER => {
 
         let world = new RAPIER.World({ x: 0.0, y: -9.81, z: 0.0 });
@@ -510,32 +500,32 @@ function runRapier() {
             let canTurn= (Math.abs(dotProduct(angularVel, worldUp)) < mTS)
             //If we can turn and we're turning right
             if (canTurn && GoingLeft){
-               //Apply an angular impulse to turn us left
+                //Apply an angular impulse to turn us left
                 let imp= vector3ByScalar(worldUp, (turnGain * chassisMass) * powerCoeff);
                 if(GoingBackward){ imp= vector3ByScalar(imp, -1)}
                 chassisRB.applyTorqueImpulse(imp)
             }
             if (canTurn && GoingRight){
                 //Apply an angular impulse to turn us right
-                 let imp= vector3ByScalar(worldUp, (-turnGain * chassisMass) * powerCoeff);
-                 if(GoingBackward){ imp= vector3ByScalar(imp, -1)}
-                 chassisRB.applyTorqueImpulse(imp)
-             }
-             //Work out how fast we're sliding left/right and compensate according to the grip property. We just allow the car to slide if its braking
-             let slideSpeed= dotProduct(worldRight, currentVel);
-             if (!Braking){
+                    let imp= vector3ByScalar(worldUp, (-turnGain * chassisMass) * powerCoeff);
+                    if(GoingBackward){ imp= vector3ByScalar(imp, -1)}
+                    chassisRB.applyTorqueImpulse(imp)
+                }
+                //Work out how fast we're sliding left/right and compensate according to the grip property. We just allow the car to slide if its braking
+                let slideSpeed= dotProduct(worldRight, currentVel);
+                if (!Braking){
                 let imp= vector3ByScalar(worldRight, (-slideSpeed*chassisMass*grip)*powerCoeff);
                 //Apply an impulse to compensate for sliding
                 chassisRB.applyImpulse(imp)
-             }
-             //Apply an angular impulse to compensate for spinning
-             if(!canTurn || (!GoingLeft && !GoingRight)){
+                }
+                //Apply an angular impulse to compensate for spinning
+                if(!canTurn || (!GoingLeft && !GoingRight)){
                 let imp= vector3ByScalar(worldUp, dotProduct(angularVel, worldUp)*(-turnGain*chassisMass)*powerCoeff);
                 chassisRB.applyTorqueImpulse(imp)
-             }
-             //Apply Drag proportional to speed
-             let imp= vector3ByScalar(currentVel, -1*(drag*chassisMass));
-             chassisRB.applyImpulse(imp)
+                }
+                //Apply Drag proportional to speed
+                let imp= vector3ByScalar(currentVel, -1*(drag*chassisMass));
+                chassisRB.applyImpulse(imp)
 
 
             //UPDATE HOVER 
