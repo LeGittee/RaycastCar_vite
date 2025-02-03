@@ -73,7 +73,6 @@ function initThree() {
     camera.position.copy(camCurrentPos);
     //camera.quaternion.setFromAxisAngle(new THREE.Vector3(0,1,0), -Math.PI/2);
     scene.add(camera);
-    console.log('camera object', camera)
 
     // lights
     var light;
@@ -97,14 +96,6 @@ function initThree() {
 
     scene.add( light );
 
-    // cube
-    var cubeGeo = new THREE.BoxGeometry( cubeSizeX, cubeSizeY, cubeSizeZ);
-    var cubeMaterial = new THREE.MeshPhysicalMaterial( { color: 0x888888 } );
-    let cubeMesh = new THREE.Mesh(cubeGeo, cubeMaterial);
-    cubeMesh.castShadow = true;
-    cubeMesh.receiveShadow = true;
-    meshes.push(cubeMesh);
-    scene.add(cubeMesh);
 
     //create placeholder wheel models
     /*
@@ -140,7 +131,6 @@ function initThree() {
         chassisRawPoints= chassisGeo.attributes.position.array;
         chassisMesh.castShadow = true;
         chassisMesh.receiveShadow = true;
-        chassisMesh.material = cubeMaterial;
         meshes.push(chassisMesh)
         scene.add(chassisMesh)
 
@@ -175,17 +165,7 @@ function initThree() {
     ); 
     
     //rocks models
-    loader.load( '../assets/rocks.glb', function ( gltf ) {
-        scene.add(gltf.scene)  
-        console.log("child in rocks scene")     
-        gltf.scene.traverse(function(child) {
-            if (child.isMesh){
-                console.log(child.name, child)
-            }
-        })
-
-
-    }, undefined, function ( error ) {
+    loader.load( '../assets/rocks.glb', function ( gltf ) { scene.add(gltf.scene) }, undefined, function ( error ) {
 
         console.error( error );
 
@@ -367,15 +347,6 @@ function initRapier() {
 
     world = new RAPIER.World({ x: 0.0, y: -9.81, z: 0.0 });
     world.timestep = dt
-    //console.log("world timestep", world.timestep)
-
-    // Create the Cube physics
-    CubeBodyDesc = RAPIER.RigidBodyDesc.dynamic();
-    CubeBody = world.createRigidBody(CubeBodyDesc)
-    CubeBody.setTranslation(new RAPIER.Vector3(-10, 50, -10))
-    CubeColDesc = RAPIER.ColliderDesc.cuboid(cubeSizeX*0.5,cubeSizeY*0.5,cubeSizeZ*0.5);
-    CubeCol = world.createCollider(CubeColDesc, CubeBody)
-    bodies.push(CubeBody);
 
 
     //create vehicle chassis physics
@@ -385,6 +356,19 @@ function initRapier() {
     chassisCol= world.createCollider(chassisColDesc, chassisBody);
     chassisBody.setTranslation( spawnPosition )
     bodies.push(chassisBody) 
+
+    //create the rocks physics
+    var sceneObjects= scene.getObjectsByProperty("isObject3D", true);
+    var rockBodies= [];
+    for (let i=0; i!==sceneObjects.length; i++){
+        if (sceneObjects[i].name.includes("rocks")){
+            meshes.push(scene.getObjectByName(sceneObjects[i].name));
+            rockBodies[i]= world.createRigidBody(RAPIER.RigidBodyDesc.dynamic());
+            world.createCollider(RAPIER.ColliderDesc.convexHull(sceneObjects[i].geometry.attributes.position.array), rockBodies[i]);
+            rockBodies[i].setTranslation(sceneObjects[i].position);
+            bodies.push(rockBodies[i])
+        };
+    };
 
     console.log("bodies", bodies)
     console.log("meshes", meshes)
@@ -683,5 +667,4 @@ let gameLoop = ()=> {
     //console.log("chassis rotation", chasRot)
 
     setTimeout(gameLoop);
-
 };
