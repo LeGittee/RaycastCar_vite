@@ -18,8 +18,6 @@ var camAimCoef = 0.2;
 var camCurrentPos = AddTwoVec3(offsetCam, spawnPosition);
 var targetCurrentPos = spawnPosition;
 
-let cubeSizeX= 3, cubeSizeY= 3, cubeSizeZ= 3;
-
 // To be synced
 var meshes=[], bodies=[];
 var controls;
@@ -75,27 +73,27 @@ function initThree() {
     scene.add(camera);
 
     // lights
-    var light;
     scene.add( new THREE.AmbientLight( 0x666666 ) );
 
-    light = new THREE.DirectionalLight( 0xffffff, 12 );
-    var d = 70;
-
-    light.position.set( -d, d, 0.6*d );
+    var light = new THREE.DirectionalLight( 0xffffff, 12 );
+    var d = 50;
+    var e = 600
+    light.position.set( -0.1*d, 2*d, 0.1*d );
 
     light.castShadow = true;
     //shadow projection settings
-    light.shadow.mapSize.width = 3000;
-    light.shadow.mapSize.height = 3000;
-    light.shadow.camera.near = d;
-    light.shadow.camera.far = 2*d; 
-    light.shadow.camera.left = -d;
-    light.shadow.camera.right = d;
-    light.shadow.camera.top = d;
-    light.shadow.camera.bottom = -d;
+    light.shadow.mapSize.width = 4096;
+    light.shadow.mapSize.height = 4096;
+    light.shadow.camera.near = 1;
+    light.shadow.camera.far = 500; 
+    light.shadow.camera.left = -e;
+    light.shadow.camera.right = e;
+    light.shadow.camera.top = e;
+    light.shadow.camera.bottom = -e;
+    light.shadow.bias = -0.0025;
 
     scene.add( light );
-
+    //scene.add( new THREE.CameraHelper( light.shadow.camera ) );
 
     //create placeholder wheel models
     /*
@@ -129,11 +127,8 @@ function initThree() {
         let chassisMesh= gltf.scene;
         let chassisGeo= makeMergedGeo(chassisMesh);
         chassisRawPoints= chassisGeo.attributes.position.array;
-        chassisMesh.castShadow = true;
-        chassisMesh.receiveShadow = true;
         meshes.push(chassisMesh)
         scene.add(chassisMesh)
-
         //get the bounding box for car parameters
         chassisBBoxSize = new THREE.Box3().setFromObject(chassisMesh).getSize(new THREE.Vector3());
         //assign them to car parameters
@@ -153,8 +148,6 @@ function initThree() {
         let groundGeo= makeMergedGeo(groundMesh)
         groundRawPoints = groundGeo.attributes.position.array
         groundIndices = new Uint32Array(groundGeo.getIndex().array)
-        groundMesh.castShadow = true;
-        groundMesh.receiveShadow = true;
         scene.add( groundMesh );
 
         }, undefined, function ( error ) {
@@ -182,10 +175,9 @@ function initThree() {
 
     renderer.gammaInput = true;
     renderer.gammaOutput = true;
-    //renderer.shadowMapEnabled = true;
 
     window.addEventListener( 'resize', onWindowResize, false );
-    
+ 
     createOrbitControls()
 }
 
@@ -344,6 +336,15 @@ var chassisRB, isHoveringList, hoverDistList, com, ray;
 var localUp, localDown, localFwd, localRight, posA, posB, posC, posD, wheelPointList;
 
 function initRapier() {
+    //set all the models to cast shadows
+    scene.traverse( function ( node ) {
+        if ( node.isMesh ) {
+            node.castShadow = true;
+            node.receiveShadow = true;
+            node.material.metalness = 0;
+            node.material.shadowSide = THREE.FrontSide;
+        }
+    } );
 
     world = new RAPIER.World({ x: 0.0, y: -9.81, z: 0.0 });
     world.timestep = dt
