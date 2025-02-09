@@ -4,14 +4,15 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import RAPIER from '@dimforge/rapier3d';
 
-var spawnPosition= new RAPIER.Vector3(10, 30, 10);
+var spawnPosition= new RAPIER.Vector3(-77.521, 17.013, 317.74);
+var spawnOrientation = new THREE.Quaternion(0.027, 0.072, 0.019, 0.997)
 var dt = 1 / 60;
 var camera, scene, renderer
 
 
 var useFreeCam= false;
 //offset local vector for the camera position
-var offsetCam= {x:-25, y:6, z:0};
+var offsetCam= {x:-18, y:5, z:0};
 var camMoveCoef = 0.07;
 var camAimCoef = 0.2;
 //initialize camera positions
@@ -67,7 +68,7 @@ function initThree() {
     scene.fog = new THREE.Fog( 0x000000, 500, 10000 );
 
     // camera
-    camera = new THREE.PerspectiveCamera( 35, window.innerWidth / (window.innerHeight) , 0.5, 10000 );
+    camera = new THREE.PerspectiveCamera( 51.6150, window.innerWidth / (window.innerHeight) , 0.5, 10000 );
     camera.position.copy(camCurrentPos);
     //camera.quaternion.setFromAxisAngle(new THREE.Vector3(0,1,0), -Math.PI/2);
     scene.add(camera);
@@ -75,7 +76,7 @@ function initThree() {
     // lights
     scene.add( new THREE.AmbientLight( 0x666666 ) );
 
-    var light = new THREE.DirectionalLight( 0xffffff, 12 );
+    var light = new THREE.DirectionalLight( 0xffffff, 8 );
     var d = 50;
     var e = 600
     light.position.set( -0.1*d, 2*d, 0.1*d );
@@ -170,6 +171,7 @@ function initThree() {
     renderer.setSize( window.innerWidth, window.innerHeight);
     renderer.setClearColor( scene.fog.color );
     renderer.shadowMap.enabled = true;
+    renderer.shadowMap.type = THREE.PCFSoftShadowMap ;
 
     gameDiv.appendChild( renderer.domElement );
 
@@ -356,6 +358,7 @@ function initRapier() {
     chassisColDesc= RAPIER.ColliderDesc.convexHull(chassisRawPoints);
     chassisCol= world.createCollider(chassisColDesc, chassisBody);
     chassisBody.setTranslation( spawnPosition )
+    chassisBody.setRotation( spawnOrientation )
     bodies.push(chassisBody) 
 
     //create the rocks physics
