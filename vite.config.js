@@ -13,6 +13,7 @@ export default defineConfig({
   ],
   base: './',
     build: {
+      target: "ES2022",
       emptyOutDir: true,
       rollupOptions: {
         treeshake: false

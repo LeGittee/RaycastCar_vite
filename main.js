@@ -9,6 +9,11 @@ var spawnOrientation = new THREE.Quaternion(0.027, 0.072, 0.019, 0.997)
 var dt = 1 / 60;
 var camera, scene, renderer
 
+//sound of engine
+var audio = new Audio("assets/engine_snd.mp3");
+audio.loop = true;
+audio.preservesPitch = true;
+//audio.playbackRate = 0.5;
 
 var useFreeCam= false;
 //offset local vector for the camera position
@@ -24,7 +29,7 @@ var meshes=[], bodies=[];
 var controls;
 var groundRawPoints, groundIndices, chassisRawPoints, chassisBBoxSize;
 var wheelList=[];
-let wheelPathList= ['../assets/wheel.glb'];
+let wheelPathList= ['assets/wheel.glb'];
 let wheelRadiusList= [];
 
 // parameters of the car
@@ -123,7 +128,7 @@ function initThree() {
     }
 
     //Vehicle chassis model
-    loader.load( '../assets/chassis.glb', function ( gltf ) {
+    loader.load( 'assets/chassis.glb', function ( gltf ) {
 
         let chassisMesh= gltf.scene;
         let chassisGeo= makeMergedGeo(chassisMesh);
@@ -143,7 +148,7 @@ function initThree() {
     } );
 
     //ground model
-    loader.load( '../assets/ground.glb', function ( gltf ) {
+    loader.load( 'assets/ground.glb', function ( gltf ) {
 
         let groundMesh= gltf.scene
         let groundGeo= makeMergedGeo(groundMesh)
@@ -159,7 +164,7 @@ function initThree() {
     ); 
     
     //rocks models
-    loader.load( '../assets/rocks.glb', function ( gltf ) { scene.add(gltf.scene) }, undefined, function ( error ) {
+    loader.load( 'assets/rocks.glb', function ( gltf ) { scene.add(gltf.scene) }, undefined, function ( error ) {
 
         console.error( error );
 
@@ -438,6 +443,14 @@ let gameLoop = ()=> {
     //updates springarm cam
     updateSpringarmCam();
 
+    //audio test
+    addEventListener("mousedown", (event) => {
+        /*
+        console.log("audio play triggered")
+        audio.play();
+        */
+    });
+    
 
     //GET KEYS
     //two listeners to get key events
@@ -670,5 +683,5 @@ let gameLoop = ()=> {
     //printing stuff
     //console.log("chassis rotation", chasRot)
 
-    setTimeout(gameLoop);
+    setTimeout(gameLoop, 11);
 };
