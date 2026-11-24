@@ -15,8 +15,69 @@
     </div>
      -->
 
+    <!-- Aide : indication du helper + tableau des commandes -->
+    <div id="helper-hint" class="helper-hint">H to open helper</div>
+
+    <div id="helper-panel" class="helper-panel" hidden>
+        <div class="helper-title">Controls</div>
+        <div class="helper-subtitle">Tap to close</div>
+        <table class="helper-table">
+            <thead>
+                <tr><th>Button</th><th>Action</th></tr>
+            </thead>
+            <tbody>
+                <tr class="helper-group"><td colspan="2">Controller (Xbox / XInput)</td></tr>
+                <tr><td>A</td><td>Accelerate</td></tr>
+                <tr><td>X</td><td>Reverse</td></tr>
+                <tr><td>D-pad ← / →</td><td>Steer left / right</td></tr>
+                <tr><td>Y</td><td>Flip vehicle</td></tr>
+                <tr><td>B</td><td>Handbrake</td></tr>
+                <tr><td>RT</td><td>Accelerate (analog)</td></tr>
+                <tr><td>LT</td><td>Brake / Reverse (analog)</td></tr>
+                <tr><td>Left stick ← / →</td><td>Steer (analog)</td></tr>
+                <tr><td>View / Back</td><td>Show / hide helper</td></tr>
+                <tr><td>Right stick</td><td>Rotate camera (yaw / pitch)</td></tr>
+
+                <tr class="helper-group"><td colspan="2">Keyboard</td></tr>
+                <tr><td>↑ / ↓</td><td>Accelerate / Reverse</td></tr>
+                <tr><td>← / →</td><td>Steer left / right</td></tr>
+                <tr><td>F</td><td>Flip vehicle</td></tr>
+                <tr><td>Space</td><td>Handbrake</td></tr>
+                <tr><td>H</td><td>Show / hide helper</td></tr>
+                <tr><td>Drag</td><td>Rotate camera (mouse / touch)</td></tr>
+
+                <tr class="helper-group"><td colspan="2">Touch / Screen</td></tr>
+                <tr><td>On-screen buttons</td><td>Drive / flip vehicle</td></tr>
+                <tr><td>Fullscreen button</td><td>Enter / exit fullscreen</td></tr>
+            </tbody>
+        </table>
+    </div>
+
+    <!-- Contrôles tactiles -->
+    <div id="touch-controls" class="touch-controls">
+        <!-- Direction : horizontal, gauche à gauche -->
+        <div class="touch-cluster touch-cluster-steer">
+            <button type="button" class="touch-btn" data-action="left" aria-label="Steer left">◀</button>
+            <button type="button" class="touch-btn" data-action="right" aria-label="Steer right">▶</button>
+        </div>
+
+        <!-- Marche avant/arrière : vertical, avant au-dessus + bouton retournement à droite -->
+        <div class="touch-cluster touch-cluster-right">
+            <button type="button" class="touch-btn touch-flip" data-action="flip" aria-label="Flip vehicle">⟳</button>
+            <div class="touch-column">
+                <button type="button" class="touch-btn touch-accel" data-action="forward" aria-label="Accelerate">▲</button>
+                <button type="button" class="touch-btn touch-reverse" data-action="backward" aria-label="Reverse">▼</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Plein écran (disponible aussi sur desktop) -->
+    <button type="button" id="fullscreen-btn" class="fullscreen-btn" aria-label="Enter fullscreen" title="Enter fullscreen">⛶</button>
+
 </body>
 
 <script type="module" src="main.js"></script>
+
+
 
 </html>

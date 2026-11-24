@@ -1,7 +1,8 @@
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
-import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
+import { CSM } from 'three/addons/csm/CSM.js';
+import { CSMHelper } from 'three/addons/csm/CSMHelper.js';
 import RAPIER from '@dimforge/rapier3d';
 
 var spawnPosition= new RAPIER.Vector3(-77.521, 17.013, 317.74);
@@ -9,13 +10,67 @@ var spawnOrientation = new THREE.Quaternion(0.027, 0.072, 0.019, 0.997)
 var dt = 1 / 60;
 var camera, scene, renderer
 
+// ---------------------------------------------------------------------------
+// CSM (Cascaded Shadow Maps) - réglages modifiables
+// ---------------------------------------------------------------------------
+var csm;
+var csmHelper = null;
+var showCsmHelper = false;
+
+// Détection tactile : sert aux boutons, au HUD et au profil d'ombres
+const forceTouchControls = false; // passer à true pour tester sur desktop
+const isTouchDevice = ('ontouchstart' in window) || navigator.maxTouchPoints > 0 || forceTouchControls;
+
+const csmSettings = {
+    // Profil allégé sur mobile : 2 cascades 1024² au lieu de 4 en 2048² (~8x moins de pixels d'ombre)
+    cascades: isTouchDevice ? 2 : 4,
+    maxFar: isTouchDevice ? 1200 : 2000,
+    shadowMapSize: isTouchDevice ? 1024 : 2048,
+    lightIntensity: 6,                                // 3 = un peu faible, 8 = trop blanc
+    lightAngleDeg: 40,                                // inclinaison des rayons / normale au sol (10-45°)
+    lightAzimuthDeg: 45,                              // orientation horizontale (0 = +X, 90 = -Z)
+    lightMargin: 500,
+    lightFar: 4000,
+    shadowBias: -0.0005,
+    fade: !isTouchDevice                              // transition douce désactivée sur mobile
+};
+
+// ---------------------------------------------------------------------------
+// Inputs : clavier + manette (nomenclature XInput)
+// ---------------------------------------------------------------------------
+var keyState = { forward:false, backward:false, left:false, right:false, brake:false, flip:false };
+var touchState = { forward:false, backward:false, left:false, right:false, flip:false };
+var padState = {
+    forward:false, backward:false, left:false, right:false, brake:false, flip:false,
+    analog: { throttle:0, reverse:0, steer:0, cameraX:0, cameraY:0 } // RT, LT, stick gauche X, stick droit X/Y
+};
+
+// Valeurs combinées (digital + analogique) utilisées par la physique
+var throttleAmount = 0; // 0..1  (RT / A / flèche haut)
+var reverseAmount  = 0; // 0..1  (LT / X / flèche bas)
+var steerAmount    = 0; // -1..1 (stick gauche / D-pad / flèches gauche-droite)
+const analogDeadzone = 0.12;
+const steerCurveExponent = 2.0; // >1 : rotation douce près du centre du stick
+
+// Mapping standard de la Gamepad API (Xbox : A=0, B=1, X=2, Y=3, D-pad G=14, D=15)
+const gamepadMapping = {
+    forward:  0,  // A  : accélérer
+    brake:    1,  // B  : frein à main
+    backward: 2,  // X  : marche arrière
+    flip:     3,  // Y  : retourner le véhicule
+    left:     14, // D-pad gauche : tourner à gauche
+    right:    15  // D-pad droit  : tourner à droite
+};
+var activeGamepadIndex = null;
+const gamepadHelperButton = 8; // View / Back sur Xbox
+var helperButtonWasPressed = false; // détection de front pour ne basculer qu'une fois
+
 //sound of engine
 var audio = new Audio("assets/engine_snd.mp3");
 audio.loop = true;
 audio.preservesPitch = true;
 //audio.playbackRate = 0.5;
 
-var useFreeCam= false;
 //offset local vector for the camera position
 var offsetCam= {x:-18, y:5, z:0};
 var camMoveCoef = 0.07;
@@ -24,9 +79,29 @@ var camAimCoef = 0.2;
 var camCurrentPos = AddTwoVec3(offsetCam, spawnPosition);
 var targetCurrentPos = spawnPosition;
 
+// ---------------------------------------------------------------------------
+// Rotation de la caméra : stick droit + glisser souris/tactile, retour auto
+// ---------------------------------------------------------------------------
+var cameraYaw = 0;              // angle accumulé autour de la voiture (rad)
+var cameraPitch = 0;            // décalage d'élévation (rad, borné)
+var cameraIdleTime = 0;         // temps depuis la dernière commande de rotation
+var dragActive = false;
+var dragPointerId = null;
+var lastPointerX = 0, lastPointerY = 0;
+var lastFrameTime = performance.now();
+
+const cameraSettings = {
+    yawRate: 2.5,               // rad/s à plein stick (~143°/s)
+    pitchRate: 1.5,             // rad/s à plein stick (~86°/s)
+    mouseSensitivity: 0.008,    // rad par pixel
+    pitchMin: -0.44,            // -25°
+    pitchMax: 0.79,             // +45°
+    returnDelay: 0.25,          // s avant de revenir derrière la voiture
+    returnDuration: 0.6         // durée approximative du retour
+};
+
 // To be synced
 var meshes=[], bodies=[];
-var controls;
 var groundRawPoints, groundIndices, chassisRawPoints, chassisBBoxSize;
 var wheelList=[];
 let wheelPathList= ['assets/wheel.glb'];
@@ -81,25 +156,39 @@ function initThree() {
     // lights
     scene.add( new THREE.AmbientLight( 0x666666 ) );
 
-    var light = new THREE.DirectionalLight( 0xffffff, 8 );
-    var d = 50;
-    var e = 600
-    light.position.set( -0.1*d, 2*d, 0.1*d );
+    // Direction des rayons : inclinaison par rapport à la verticale + azimut au sol
+    const lightAngle = THREE.MathUtils.degToRad(csmSettings.lightAngleDeg);
+    const lightAzimuth = THREE.MathUtils.degToRad(csmSettings.lightAzimuthDeg);
+    const lightDirection = new THREE.Vector3(
+        Math.sin(lightAngle) * Math.cos(lightAzimuth),
+        -Math.cos(lightAngle),
+        -Math.sin(lightAngle) * Math.sin(lightAzimuth)
+    ).normalize();
 
-    light.castShadow = true;
-    //shadow projection settings
-    light.shadow.mapSize.width = 4096;
-    light.shadow.mapSize.height = 4096;
-    light.shadow.camera.near = 1;
-    light.shadow.camera.far = 500; 
-    light.shadow.camera.left = -e;
-    light.shadow.camera.right = e;
-    light.shadow.camera.top = e;
-    light.shadow.camera.bottom = -e;
-    light.shadow.bias = -0.0025;
+    // CSM : remplace l'ancienne DirectionalLight unique par 4 lumières en cascades.
+    csm = new CSM({
+        camera: camera,
+        parent: scene,
+        cascades: csmSettings.cascades,
+        maxFar: csmSettings.maxFar,
+        mode: 'practical',
+        shadowMapSize: csmSettings.shadowMapSize,
+        shadowBias: csmSettings.shadowBias,
+        lightDirection: lightDirection,
+        lightIntensity: csmSettings.lightIntensity,
+        lightNear: 1,
+        lightFar: csmSettings.lightFar,
+        lightMargin: csmSettings.lightMargin
+    });
+    csm.fade = csmSettings.fade;
+    csm.updateFrustums();
 
-    scene.add( light );
-    //scene.add( new THREE.CameraHelper( light.shadow.camera ) );
+    // Touche H : affiche/masque le helper de visualisation des cascades
+    document.addEventListener('keydown', function (event) {
+        if (event.key === 'h' || event.key === 'H') {
+            toggleCsmHelper();
+        }
+    });
 
     //create placeholder wheel models
     /*
@@ -184,30 +273,83 @@ function initThree() {
     renderer.gammaOutput = true;
 
     window.addEventListener( 'resize', onWindowResize, false );
- 
-    createOrbitControls()
+
+    initInput(); // clavier, manette, souris/tactile (une seule fois)
+    updateHelperUI(); // état initial du HUD
 }
 
-function createOrbitControls() {
+// Bascule l'affichage du HUD (indication + tableau des commandes)
+function updateHelperUI() {
+    const hint = document.getElementById('helper-hint');
+    const panel = document.getElementById('helper-panel');
+    if (hint) hint.hidden = showCsmHelper;
+    if (panel) panel.hidden = !showCsmHelper;
+}
 
-    // creates orbit controls class instance for camera controls
-    controls = new OrbitControls( camera, renderer.domElement );
-    controls.minDistance = getVector3Magnitude(offsetCam);
-    controls.maxDistance = getVector3Magnitude(offsetCam);
-    controls.maxPolarAngle = Math.PI / 2;
-    //controls.enableDamping = true ;
+// Affiche/masque le helper de debug des cascades (créé à la demande)
+function toggleCsmHelper() {
+    if (!csm) return;
+
+    showCsmHelper = !showCsmHelper;
+
+    if (showCsmHelper) {
+        if (!csmHelper) {
+            csmHelper = new CSMHelper(csm);
+            csmHelper.visible = false;
+            scene.add(csmHelper);
+        }
+        csmHelper.visible = true;
+    } else if (csmHelper) {
+        csmHelper.visible = false;
+    }
+
+    updateHelperUI();
+}
+
+// Met à jour les angles de rotation de la caméra (stick droit en vitesse + retour auto)
+function updateCameraInput(dt) {
+    const cx = padState.analog.cameraX;
+    const cy = padState.analog.cameraY;
+
+    if (cx !== 0 || cy !== 0) {
+        cameraYaw   += cx * cameraSettings.yawRate * dt;
+        // axe Y manette : pousser vers le haut élève la caméra (axe 3 = -1 en haut)
+        cameraPitch -= cy * cameraSettings.pitchRate * dt;
+        cameraPitch = Math.max(cameraSettings.pitchMin, Math.min(cameraSettings.pitchMax, cameraPitch));
+        cameraIdleTime = 0;
+    } else if (!dragActive) {
+        cameraIdleTime += dt;
+        if (cameraIdleTime >= cameraSettings.returnDelay) {
+            // ramène l'angle dans [-PI, PI] : même orientation visuelle, retour par le plus court chemin
+            cameraYaw = Math.atan2(Math.sin(cameraYaw), Math.cos(cameraYaw));
+            const keep = Math.exp(-dt / (cameraSettings.returnDuration / 3));
+            cameraYaw *= keep;
+            cameraPitch *= keep;
+        }
+    }
+}
+
+// Calcule le décalage de la caméra dans le repère de la voiture
+function getCameraLocalOffset() {
+    const base = new THREE.Vector3(offsetCam.x, offsetCam.y, offsetCam.z);
+    const spherical = new THREE.Spherical().setFromVector3(base);
+    spherical.theta -= cameraYaw;
+    // phi = angle polaire depuis +Y : le pitch l'élève ; on borne pour rester au-dessus du sol
+    spherical.phi = Math.max(0.15, Math.min(Math.PI / 2 - 0.05, spherical.phi - cameraPitch));
+    const rotated = new THREE.Vector3().setFromSpherical(spherical);
+    return rotateVectorByQuaternion(rotated, chassisRB.rotation());
 }
 
 function updateSpringarmCam(){
 
     //make the position of the camera
-    let camFinalPosition = AddTwoVec3(rotateVectorByQuaternion(offsetCam, chassisRB.rotation()), new THREE.Vector3().copy(chassisRB.translation()));
+    let camFinalPosition = AddTwoVec3(getCameraLocalOffset(), new THREE.Vector3().copy(chassisRB.translation()));
     let camNextPosition= AddTwoVec3(vector3ByScalar(SubtTwoVec3(camFinalPosition, camCurrentPos), camMoveCoef), camCurrentPos);
-    if (useFreeCam===false){camera.position.copy(new THREE.Vector3().copy(camNextPosition));}
+    camera.position.copy(new THREE.Vector3().copy(camNextPosition));
     //make the position of the aim target of the camera
     let targetFinalPosition = new THREE.Vector3().copy(chassisRB.translation());
     let targetNextPosition = AddTwoVec3(vector3ByScalar(SubtTwoVec3(targetFinalPosition, targetCurrentPos), camAimCoef), targetCurrentPos);
-    if (useFreeCam===false){camera.lookAt(new THREE.Vector3().copy(targetNextPosition));}
+    camera.lookAt(new THREE.Vector3().copy(targetNextPosition));
     //store calculated positions for the next frame
     camCurrentPos = camera.position;
     targetCurrentPos= targetNextPosition;
@@ -239,9 +381,18 @@ function onWindowResize() {
     camera.aspect = window.innerWidth / (window.innerHeight) ;
     camera.updateProjectionMatrix();
     renderer.setSize( window.innerWidth, window.innerHeight);
+    // les frustums des cascades dépendent de la projection de la caméra
+    if (csm) csm.updateFrustums();
 }
 
 function animate() {
+
+    //met à jour la matrice de la caméra avant de placer les lumières CSM
+    camera.updateMatrixWorld();
+    if (csm) {
+        csm.update();
+        if (csmHelper && csmHelper.visible) csmHelper.update();
+    }
 
     //renders the Three js scene to the canvas
     renderer.render(scene, camera);
@@ -333,6 +484,233 @@ function dotProduct(vector1, vector2) {
            vector1.z * vector2.z;
 }
 
+// ---------------------------------------------------------------------------
+// Gestion des entrées (une seule initialisation, puis lecture à chaque frame)
+// ---------------------------------------------------------------------------
+function setKeyState(event, isDown) {
+    switch (event.key) {
+        case "ArrowRight": keyState.right    = isDown; break;
+        case "ArrowLeft":  keyState.left     = isDown; break;
+        case "ArrowUp":    keyState.forward  = isDown; break;
+        case "ArrowDown":  keyState.backward = isDown; break;
+        case "f": case "F": keyState.flip     = isDown; break;
+        case " ":          keyState.brake    = isDown; break;
+        default: return;
+    }
+    event.preventDefault(); // empêche le défilement de la page avec les flèches / espace
+}
+
+function initInput() {
+    document.addEventListener("keydown", e => setKeyState(e, true));
+    document.addEventListener("keyup",   e => setKeyState(e, false));
+
+    window.addEventListener("gamepadconnected", e => {
+        activeGamepadIndex = e.gamepad.index;
+        console.log("Manette connectée :", e.gamepad.id);
+    });
+    window.addEventListener("gamepaddisconnected", e => {
+        if (activeGamepadIndex === e.gamepad.index) activeGamepadIndex = null;
+        console.log("Manette déconnectée :", e.gamepad.id);
+    });
+
+    // Glisser souris / tactile : alimente les mêmes angles que le stick droit
+    const canvas = renderer.domElement;
+    canvas.addEventListener('pointerdown', e => {
+        dragActive = true;
+        dragPointerId = e.pointerId;
+        lastPointerX = e.clientX;
+        lastPointerY = e.clientY;
+        canvas.setPointerCapture(e.pointerId);
+    });
+    canvas.addEventListener('pointermove', e => {
+        if (!dragActive || e.pointerId !== dragPointerId) return;
+        cameraYaw   += (e.clientX - lastPointerX) * cameraSettings.mouseSensitivity;
+        cameraPitch += (e.clientY - lastPointerY) * cameraSettings.mouseSensitivity;
+        cameraPitch = Math.max(cameraSettings.pitchMin, Math.min(cameraSettings.pitchMax, cameraPitch));
+        lastPointerX = e.clientX;
+        lastPointerY = e.clientY;
+        cameraIdleTime = 0;
+    });
+    const endDrag = e => {
+        if (e.pointerId !== dragPointerId) return;
+        dragActive = false;
+        dragPointerId = null;
+        if (canvas.hasPointerCapture(e.pointerId)) canvas.releasePointerCapture(e.pointerId);
+        cameraIdleTime = 0;
+    };
+    canvas.addEventListener('pointerup', endDrag);
+    canvas.addEventListener('pointercancel', endDrag);
+
+    initTouchControls();
+}
+
+// Boutons tactiles + bouton plein écran
+function initTouchControls() {
+    if (isTouchDevice) document.body.classList.add('touch-controls-on');
+
+    // Un appui = une action maintenue ; on capture le pointeur pour ne pas "coller" le bouton
+    document.querySelectorAll('.touch-btn[data-action]').forEach(btn => {
+        const action = btn.dataset.action;
+
+        const press = e => {
+            e.preventDefault();
+            touchState[action] = true;
+            btn.classList.add('is-pressed');
+            btn.setPointerCapture(e.pointerId);
+        };
+        const release = e => {
+            e.preventDefault();
+            touchState[action] = false;
+            btn.classList.remove('is-pressed');
+            if (btn.hasPointerCapture(e.pointerId)) btn.releasePointerCapture(e.pointerId);
+        };
+
+        btn.addEventListener('pointerdown', press);
+        btn.addEventListener('pointerup', release);
+        btn.addEventListener('pointercancel', release);
+        btn.addEventListener('lostpointercapture', release);
+    });
+
+    // Plein écran : un seul bouton qui change d'icône selon l'état
+    const fsBtn = document.getElementById('fullscreen-btn');
+    const syncFullscreenButton = () => {
+        const active = !!(document.fullscreenElement || document.webkitFullscreenElement);
+        fsBtn.textContent = active ? '✕' : '⛶';
+        const label = active ? 'Exit fullscreen' : 'Enter fullscreen';
+        fsBtn.setAttribute('aria-label', label);
+        fsBtn.title = label;
+    };
+
+    fsBtn.addEventListener('click', () => {
+        const active = !!(document.fullscreenElement || document.webkitFullscreenElement);
+        if (!active) {
+            if (document.documentElement.requestFullscreen) document.documentElement.requestFullscreen();
+            else if (document.documentElement.webkitRequestFullscreen) document.documentElement.webkitRequestFullscreen();
+        } else {
+            if (document.exitFullscreen) document.exitFullscreen();
+            else if (document.webkitExitFullscreen) document.webkitExitFullscreen();
+        }
+    });
+
+    document.addEventListener('fullscreenchange', syncFullscreenButton);
+    document.addEventListener('webkitfullscreenchange', syncFullscreenButton);
+    syncFullscreenButton();
+
+    // Le HUD lui-même sert de bouton : un tap ouvre l'aide, un autre tap la ferme
+    const hudHint = document.getElementById('helper-hint');
+    const hudPanel = document.getElementById('helper-panel');
+    [hudHint, hudPanel].forEach(el => {
+        if (!el) return;
+        el.setAttribute('role', 'button');
+        el.setAttribute('tabindex', '0');
+        el.addEventListener('pointerdown', e => {
+            e.preventDefault();
+            e.stopPropagation();
+            toggleCsmHelper();
+        });
+        el.addEventListener('keydown', e => {
+            if (e.key === 'Enter' || e.key === ' ') {
+                e.preventDefault();
+                e.stopPropagation();
+                toggleCsmHelper();
+            }
+        });
+    });
+    if (isTouchDevice && hudHint) hudHint.textContent = 'Tap to open helper';
+}
+
+function pollGamepad() {
+    if (!navigator.getGamepads) return;
+
+    const pads = navigator.getGamepads();
+    let pad = null;
+
+    if (activeGamepadIndex !== null && pads[activeGamepadIndex]) {
+        pad = pads[activeGamepadIndex];
+    } else {
+        // sinon on prend la première manette disponible
+        for (let i = 0; i < pads.length; i++) {
+            if (pads[i]) { pad = pads[i]; activeGamepadIndex = i; break; }
+        }
+    }
+
+    if (!pad) {
+        // pas de manette : on relâche tout pour éviter une touche restée "bloquée"
+        padState.forward = padState.backward = padState.left = padState.right = false;
+        padState.brake = padState.flip = false;
+        padState.analog.throttle = padState.analog.reverse = padState.analog.steer = 0;
+        padState.analog.cameraX = padState.analog.cameraY = 0;
+        helperButtonWasPressed = false;
+        return;
+    }
+
+    // Boutons digitaux (A, B, X, Y, D-pad)
+    for (const action in gamepadMapping) {
+        const button = pad.buttons[gamepadMapping[action]];
+        padState[action] = !!button && (button.pressed || button.value > 0.5);
+    }
+
+    // Gâchettes : boutons 6 (LT) et 7 (RT), valeur 0..1 proportionnelle
+    const rt = pad.buttons[7] ? pad.buttons[7].value : 0;
+    const lt = pad.buttons[6] ? pad.buttons[6].value : 0;
+    padState.analog.throttle = rt;
+    padState.analog.reverse  = lt;
+
+    // Stick gauche, axe X : -1 = gauche, +1 = droite, avec zone morte et courbe douce
+    let sx = pad.axes[0] || 0;
+    if (Math.abs(sx) < analogDeadzone) {
+        sx = 0;
+    } else {
+        // remise à l'échelle [deadzone..1] -> [0..1], puis courbe puissance pour adoucir
+        // les faibles inclinaisons (1 = linéaire, 2 = doux, 3 = très doux)
+        const normalized = (Math.abs(sx) - analogDeadzone) / (1 - analogDeadzone);
+        sx = Math.sign(sx) * Math.pow(normalized, steerCurveExponent);
+    }
+    padState.analog.steer = sx;
+
+    // Stick droit : axe 2 = yaw, axe 3 = pitch (vitesse, donc zone morte simple)
+    let cx = pad.axes[2] || 0;
+    let cy = pad.axes[3] || 0;
+    if (Math.abs(cx) < analogDeadzone) cx = 0;
+    else cx = Math.sign(cx) * (Math.abs(cx) - analogDeadzone) / (1 - analogDeadzone);
+    if (Math.abs(cy) < analogDeadzone) cy = 0;
+    else cy = Math.sign(cy) * (Math.abs(cy) - analogDeadzone) / (1 - analogDeadzone);
+    padState.analog.cameraX = cx;
+    padState.analog.cameraY = cy;
+
+    // Bouton View / Back : bascule du helper uniquement au moment de l'appui
+    const helperPressed = !!pad.buttons[gamepadHelperButton] && pad.buttons[gamepadHelperButton].pressed;
+    if (helperPressed && !helperButtonWasPressed) {
+        toggleCsmHelper();
+    }
+    helperButtonWasPressed = helperPressed;
+}
+
+// Combine clavier + manette dans les variables historiques utilisées par la physique
+function updateDrivingInput() {
+    pollGamepad();
+
+    const fwd   = keyState.forward  || padState.forward  || touchState.forward;
+    const back  = keyState.backward || padState.backward || touchState.backward;
+    const left  = keyState.left     || padState.left     || touchState.left;
+    const right = keyState.right    || padState.right    || touchState.right;
+
+    // Les touches digitales restent à pleine puissance, l'analogique module l'intensité
+    throttleAmount = Math.max(fwd ? 1 : 0, padState.analog.throttle);
+    reverseAmount  = Math.max(back ? 1 : 0, padState.analog.reverse);
+
+    const digitalSteer = (right ? 1 : 0) - (left ? 1 : 0);
+    steerAmount = Math.max(-1, Math.min(1, digitalSteer + padState.analog.steer));
+
+    GoingForward  = throttleAmount > 0.01;
+    GoingBackward = reverseAmount > 0.01;
+    // la zone morte est déjà appliquée sur l'axe du stick dans pollGamepad()
+    GoingLeft     = steerAmount < -0.01;
+    GoingRight    = steerAmount > 0.01;
+    Braking       = keyState.brake || padState.brake;
+    Flipping      = keyState.flip || padState.flip || touchState.flip;
+}
+
 //declare variables of initRapier
 var world;
 var CubeBodyDesc, CubeBody, CubeColDesc, CubeCol;
@@ -343,14 +721,29 @@ var chassisRB, isHoveringList, hoverDistList, com, ray;
 var localUp, localDown, localFwd, localRight, posA, posB, posC, posD, wheelPointList;
 
 function initRapier() {
-    //set all the models to cast shadows
+    //set all the models to cast shadows + connect their materials to CSM
     scene.traverse( function ( node ) {
-        if ( node.isMesh ) {
-            node.castShadow = true;
-            node.receiveShadow = true;
-            node.material.metalness = 0;
-            node.material.shadowSide = THREE.FrontSide;
-        }
+        if ( !node.isMesh ) return;
+
+        node.castShadow = true;
+        node.receiveShadow = true;
+
+        const materials = Array.isArray(node.material) ? node.material : [node.material];
+        materials.forEach( function ( material ) {
+            if ( !material ) return;
+
+            if ( 'metalness' in material ) {
+                material.metalness = 0;
+                material.shadowSide = THREE.FrontSide;
+            }
+
+            // les matériaux GLTF (Standard/Physical) doivent être branchés sur CSM
+            if ( csm && material.isMeshStandardMaterial && !material.userData.csmSetup ) {
+                csm.setupMaterial( material );
+                material.userData.csmSetup = true;
+                material.needsUpdate = true;
+            }
+        } );
     } );
 
     world = new RAPIER.World({ x: 0.0, y: -9.81, z: 0.0 });
@@ -431,70 +824,16 @@ let gameLoop = ()=> {
         meshes[i].quaternion.copy(bodies[i].rotation());
     }
     
-    //disable spring arm camera on mouse down
-    document.onmousedown = () => {useFreeCam= true;};
-    document.onmouseup = () => {useFreeCam= false;};
-    if (useFreeCam){
-        //updates the Orbitcontrols instance
-        controls.update();
-    }
-    //updates the target of Orbitcontols instance
-    controls.target.copy(chassisRB.translation());
-    //updates springarm cam
+    //Temps réel pour les vitesses de rotation (indépendant du framerate)
+    const nowFrame = performance.now();
+    let frameDt = (nowFrame - lastFrameTime) / 1000;
+    lastFrameTime = nowFrame;
+    frameDt = Math.min(Math.max(frameDt, 0), 0.05);
+
+    //INPUTS : clavier + manette + souris/tactile (listeners enregistrés une seule fois)
+    updateDrivingInput();
+    updateCameraInput(frameDt);
     updateSpringarmCam();
-
-    //audio test
-    addEventListener("mousedown", (event) => {
-        /*
-        console.log("audio play triggered")
-        audio.play();
-        */
-    });
-    
-
-    //GET KEYS
-    //two listeners to get key events
-    document.addEventListener("keydown", event => {
-        
-        if(event.key === "ArrowRight") {
-            GoingRight = true;
-        }
-        if(event.key === "ArrowLeft") {
-            GoingLeft = true;
-        }
-        if(event.key === "ArrowUp") {
-            GoingForward = true;
-        }
-        if(event.key === "ArrowDown") {
-            GoingBackward = true;
-        }
-        if(event.key === "f") {
-            Flipping = true;
-        }
-        if(event.key === " ") {
-            Braking = true;
-        }
-    });
-    document.addEventListener("keyup", event => {
-        if(event.key === "ArrowRight") {
-            GoingRight = false;
-        }
-        if(event.key === "ArrowLeft") {
-            GoingLeft = false;
-        }
-        if(event.key === "ArrowUp") {
-            GoingForward = false;
-        }
-        if(event.key === "ArrowDown") {
-            GoingBackward = false;
-        }
-        if(event.key === "f") {
-            Flipping = false;
-        }
-        if(event.key === " ") {
-            Braking = false;   
-        }
-    });
 
     //UPDATE DRIVE
     //prevents the chassis from being put to sleep
@@ -524,20 +863,20 @@ let gameLoop = ()=> {
     let currentSpeed= dotProduct(currentVel, worldFwd);
     let propSpeed= Math.min(Math.abs(currentSpeed)/maxSpeed, 1);
     let angularVel= chassisRB.angvel();
-    //If going forward we want to reach our Max Speed
+    //If going forward we want to reach our Max Speed (impulsion modulée par RT / touche digitale)
     if (GoingForward){
         let diff= maxSpeed - currentSpeed;
         //Apply an impulse proportial to the difference between our desired speed and our actual speed
-        let imp= vector3ByScalar(worldFwd, (diff * accGain * chassisMass) * powerCoeff);
+        let imp= vector3ByScalar(worldFwd, (diff * accGain * chassisMass) * powerCoeff * throttleAmount);
         chassisRB.applyImpulse(imp)
     }
-    //If reversing we reach -Max Speed
+    //If reversing we reach -Max Speed (impulsion modulée par LT / touche digitale)
     if (GoingBackward){
         let diff= -maxSpeed - currentSpeed;
-        let imp= vector3ByScalar(worldFwd, (diff * decGain * chassisMass) * powerCoeff);
+        let imp= vector3ByScalar(worldFwd, (diff * decGain * chassisMass) * powerCoeff * reverseAmount);
         chassisRB.applyImpulse(imp)
     }
-    //If braking we reach 0
+    //If braking we reach 0 (frein à main : reste digital)
     if (Braking){
         let imp= vector3ByScalar(worldFwd, (-currentSpeed * brakeGain * chassisMass) * powerCoeff);
         chassisRB.applyImpulse(imp)
@@ -547,19 +886,21 @@ let gameLoop = ()=> {
     //console.log("mTS", mTS)
     //console.log("current speed", currentSpeed)
     let canTurn= (Math.abs(dotProduct(angularVel, worldUp)) < mTS)
-    //If we can turn and we're turning right
+    // Le couple de direction est proportionnel à l'enfoncement du stick gauche
+    let steerPower = Math.abs(steerAmount) * powerCoeff;
+    //If we can turn and we're turning left
     if (canTurn && GoingLeft){
         //Apply an angular impulse to turn us left
-        let imp= vector3ByScalar(worldUp, (turnGain * chassisMass) * powerCoeff);
+        let imp= vector3ByScalar(worldUp, (turnGain * chassisMass) * steerPower);
         if(GoingBackward){ imp= vector3ByScalar(imp, -1)}
         chassisRB.applyTorqueImpulse(imp)
     }
     if (canTurn && GoingRight){
         //Apply an angular impulse to turn us right
-            let imp= vector3ByScalar(worldUp, (-turnGain * chassisMass) * powerCoeff);
-            if(GoingBackward){ imp= vector3ByScalar(imp, -1)}
-            chassisRB.applyTorqueImpulse(imp)
-        }
+        let imp= vector3ByScalar(worldUp, (-turnGain * chassisMass) * steerPower);
+        if(GoingBackward){ imp= vector3ByScalar(imp, -1)}
+        chassisRB.applyTorqueImpulse(imp)
+    }
         //Work out how fast we're sliding left/right and compensate according to the grip property. We just allow the car to slide if its braking
         let slideSpeed= dotProduct(worldRight, currentVel);
         if (!Braking){
@@ -622,29 +963,10 @@ let gameLoop = ()=> {
     }
     //UPDATE WHEEL MODELS
     let forwardVel= currentSpeed;
-    //Update the wheels rotations
-    if (GoingLeft){
-        if(!(WheelTurn < -0.9)){
-            WheelTurn= WheelTurn-0.1;
-        }
-    }
-    if (GoingRight){
-        if(!(WheelTurn > 0.9)){
-            WheelTurn= WheelTurn+0.1;
-        }
-    }
-    if (!GoingLeft && !GoingRight){
-        if(WheelTurn !== 0){
-            //WheelTurn= WheelTurn*0.8;
-            if(WheelTurn>-0.1 && WheelTurn<0.1){
-                WheelTurn=0;
-            } else if (WheelTurn<0) { 
-                WheelTurn= WheelTurn+0.1;
-            } else if(WheelTurn>0){ 
-                WheelTurn= WheelTurn-0.1
-            }
-        }
-    }
+    //Orientation visuelle des roues proportionnelle au steering (stick ou touches)
+    let wheelTarget = steerAmount * 0.9;
+    WheelTurn += (wheelTarget - WheelTurn) * 0.2;
+    if (Math.abs(WheelTurn) < 0.001) WheelTurn = 0;
     // Cap wheelspin
     WheelSpin= WheelSpin - (forwardVel*wheelSpincoeff);
     if(WheelSpin>360){
@@ -683,5 +1005,5 @@ let gameLoop = ()=> {
     //printing stuff
     //console.log("chassis rotation", chasRot)
 
-    setTimeout(gameLoop, 11);
+    setTimeout(gameLoop, 10);
 };

@@ -5,9 +5,189 @@
     background-color: transparent; display:block; text-align:center; position: fixed; top: 0% ; left: 0%; right: 0 ; color: red;
 }
 
+canvas {
+    touch-action: none; /* indispensable pour le glisser tactile (étape 3) */
+    display: block;
+}
+
   @keyframes blinker {
     50% {
       opacity: 0;
     }
 }
 
+/* -------------------------------------------------------------------------
+   HUD : indication du helper et tableau des commandes
+   ------------------------------------------------------------------------- */
+.helper-hint,
+.helper-panel {
+    position: fixed;
+    top: 16px;
+    right: 16px;
+    z-index: 10;
+    font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+    color: #fff;
+    background: rgba(0, 0, 0, 0.65);
+    border: 1px solid rgba(255, 255, 255, 0.25);
+    border-radius: 8px;
+    backdrop-filter: blur(4px);
+    cursor: pointer; /* le HUD sert aussi de bouton (tap pour ouvrir/fermer) */
+    user-select: none;
+    -webkit-user-select: none;
+    -webkit-tap-highlight-color: transparent;
+    touch-action: manipulation;
+}
+
+.helper-hint {
+    padding: 6px 10px;
+    font-size: 12px;
+    letter-spacing: 0.02em;
+}
+
+.helper-panel {
+    padding: 10px 12px;
+    min-width: 235px;
+}
+
+.helper-panel[hidden],
+.helper-hint[hidden] {
+    display: none;
+}
+
+.helper-title {
+    font-size: 13px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    margin-bottom: 8px;
+}
+
+.helper-subtitle {
+    display: none; /* visible seulement sur tactile */
+    font-size: 10px;
+    color: #aaa;
+    margin-top: -6px;
+    margin-bottom: 8px;
+}
+
+body.touch-controls-on .helper-subtitle {
+    display: block;
+}
+
+.helper-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 12px;
+}
+
+.helper-table th,
+.helper-table td {
+    padding: 3px 6px;
+    text-align: left;
+}
+
+.helper-table th {
+    color: #00baff;
+    font-size: 11px;
+    text-transform: uppercase;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.25);
+}
+
+.helper-group td {
+    color: #00baff;
+    font-weight: 700;
+    padding-top: 8px;
+}
+
+/* -------------------------------------------------------------------------
+   Contrôles tactiles et plein écran
+   ------------------------------------------------------------------------- */
+.touch-controls {
+    display: none; /* activé en JS sur les appareils tactiles */
+}
+
+body.touch-controls-on .touch-controls {
+    display: block;
+}
+
+.touch-cluster {
+    position: fixed;
+    bottom: 22px;
+    z-index: 12;
+    display: flex;
+    align-items: flex-end;
+    gap: 12px;
+}
+
+.touch-cluster-steer {
+    left: 22px;
+}
+
+.touch-cluster-right {
+    right: 22px;
+}
+
+.touch-column {
+    display: flex;
+    flex-direction: column; /* avant au-dessus de arrière */
+    gap: 12px;
+}
+
+.touch-btn,
+.fullscreen-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: #fff;
+    background: rgba(0, 0, 0, 0.5);
+    border: 2px solid rgba(255, 255, 255, 0.55);
+    border-radius: 50%;
+    touch-action: none;
+    user-select: none;
+    -webkit-user-select: none;
+    -webkit-tap-highlight-color: transparent;
+    cursor: pointer;
+    backdrop-filter: blur(4px);
+}
+
+.touch-btn {
+    width: 66px;
+    height: 66px;
+    font-size: 24px;
+    line-height: 1;
+}
+
+.touch-flip {
+    background: rgba(120, 60, 160, 0.55);
+}
+
+.touch-btn.is-pressed,
+.touch-btn:active {
+    background: rgba(0, 186, 255, 0.65);
+    border-color: #fff;
+    transform: scale(0.94);
+}
+
+.fullscreen-btn {
+    position: fixed;
+    top: 16px;
+    left: 16px;
+    z-index: 12;
+    width: 42px;
+    height: 42px;
+    font-size: 20px;
+}
+
+.fullscreen-btn:active {
+    background: rgba(0, 186, 255, 0.65);
+}
+
+/* Sur petit écran, on compacte légèrement les boutons */
+@media (max-width: 480px) {
+    .touch-btn { width: 58px; height: 58px; font-size: 21px; }
+    .touch-cluster { bottom: 16px; gap: 9px; }
+    .touch-cluster-steer { left: 16px; }
+    .touch-cluster-right { right: 16px; }
+    .touch-column { gap: 9px; }
+}
+ 
